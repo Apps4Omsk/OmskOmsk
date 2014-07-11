@@ -1,0 +1,66 @@
+import java.text.SimpleDateFormat
+
+apply plugin: 'com.android.application'
+
+
+dependencies {
+    compile fileTree(dir: 'libs', include: ['*.jar'])
+    compile 'com.google.android.gms:play-services:4.4.52'
+}
+
+def versionMajor = 0
+def versionMinor = 1
+def versionPatch = 0
+def versionBuild = 0 // bump for dogfood builds, public betas, etc.
+
+def gitSha() {
+    return "git --git-dir=${rootDir}/../.git --work-tree=${rootDir}/.. rev-parse --short HEAD".execute().text.trim()
+}
+
+def buildTime() {
+    def df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'")
+    df.setTimeZone(TimeZone.getTimeZone("UTC"))
+    return df.format(new Date())
+}
+
+android {
+    compileSdkVersion 20
+    buildToolsVersion "20.0.0"
+
+    defaultConfig {
+        applicationId "ru.apps4omsk.omskomsk"
+        minSdkVersion 15
+        targetSdkVersion 20
+        versionCode versionMajor * 100000 + versionMinor * 1000 + versionPatch * 10 + versionBuild
+        versionName "${versionMajor}.${versionMinor}.${versionPatch}"
+        buildConfigField 'String', 'GIT_SHA', '"' + "${gitSha()}" + '"'
+        buildConfigField 'String', 'BUILD_TIME', '"' + "${buildTime()}'" + '"'
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('../distribution/debug.keystore')
+        }
+
+        release {
+            storeFile file(project.RELEASE_KEYSTORE_FILE)
+            storePassword project.RELEASE_KEYSTORE_PASSWORD
+            keyAlias project.RELEASE_KEYSTORE_KEY_ALIAS
+            keyPassword project.RELEASE_KEYSTORE_KEY_PASSWORD
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+
+        release {
+            signingConfig signingConfigs.release
+            runProguard false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+
+    }
+
+}
