@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Омск-Омск</string>
     <string name="main_activity_title">Не пытайтесь покинуть Омск</string>
+    <string name="main_extra_text">Подробности на http://apps4omsk.ru</string>
 </resources>

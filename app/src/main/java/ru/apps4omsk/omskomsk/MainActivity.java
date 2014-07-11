@@ -6,11 +6,19 @@ import android.content.DialogInterface.OnCancelListener;
 import android.content.Intent;
 import android.content.IntentSender.SendIntentException;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import android.view.KeyEvent;
+import android.widget.TextView;
+import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.GoogleApiClient;
+
+import butterknife.ButterKnife;
+import butterknife.InjectView;
 
 
 public class MainActivity extends Activity implements
@@ -26,16 +34,19 @@ public class MainActivity extends Activity implements
      */
     protected static final int REQUEST_CODE_RESOLUTION = 1;
 
-    /**
-     * Google API client.
-     */
-    private GoogleApiClient mGoogleApiClient;
+    @InjectView(R.id.main_min_counter) TextView minCounter;
+
+    private GoogleApiClient googleApiClient;
+    private MainHelper mainHelper;
+    private Handler handler;
+    private Runnable updateCounterRunnable;
+    private long timeOfLastCheckInMs;
 
     /**
      * Determines if the client is in a resolution state, and
      * waiting for resolution intent to return.
      */
-    private boolean mIsInResolution;
+    private boolean isInResolution;
 
     /**
      * Called when the activity is starting. Restores the activity state.
@@ -43,9 +54,20 @@ public class MainActivity extends Activity implements
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        ButterKnife.inject(this);
         if (savedInstanceState != null) {
-            mIsInResolution = savedInstanceState.getBoolean(KEY_IN_RESOLUTION, false);
+            isInResolution = savedInstanceState.getBoolean(KEY_IN_RESOLUTION, false);
         }
+        mainHelper = new MainHelper(this);
+        handler = new Handler(Looper.myLooper());
+        updateCounterRunnable = new Runnable() {
+            @Override
+            public void run() {
+                updateMinCounter();
+                handler.postDelayed(updateCounterRunnable, 100);
+            }
+        };
     }
 
     /**
@@ -59,14 +81,40 @@ public class MainActivity extends Activity implements
     protected void onStart() {
         super.onStart();
         setTitle(R.string.main_activity_title);
-        if (mGoogleApiClient == null) {
-            mGoogleApiClient = new GoogleApiClient.Builder(this)
+        if (googleApiClient == null) {
+            googleApiClient = new GoogleApiClient.Builder(this)
                     // Optionally, add additional APIs and scopes if required.
                     .addConnectionCallbacks(this)
                     .addOnConnectionFailedListener(this)
                     .build();
         }
-        mGoogleApiClient.connect();
+        googleApiClient.connect();
+        timeOfLastCheckInMs = mainHelper.getTimeOfLastCheckInMs();
+        if (timeOfLastCheckInMs == -1) {
+            timeOfLastCheckInMs = getCurrentTimeMs();
+            mainHelper.updateTimeOfLastCheckInMs(timeOfLastCheckInMs);
+            Toast.makeText(this, "Вы в игре!", Toast.LENGTH_LONG);
+        }
+        handler.post(updateCounterRunnable);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        switch(keyCode){
+            case KeyEvent.KEYCODE_VOLUME_DOWN:
+                timeOfLastCheckInMs = -1;
+                mainHelper.updateTimeOfLastCheckInMs(timeOfLastCheckInMs);
+                Toast.makeText(MainActivity.this, "Вы покинули Омск!", Toast.LENGTH_SHORT).show();
+                break;
+            case KeyEvent.KEYCODE_VOLUME_UP:
+                if (timeOfLastCheckInMs == -1) {
+                    timeOfLastCheckInMs = getCurrentTimeMs();
+                    mainHelper.updateTimeOfLastCheckInMs(timeOfLastCheckInMs);
+                    Toast.makeText(MainActivity.this, "Вы снова в игре!", Toast.LENGTH_SHORT).show();
+                }
+                break;
+        }
+        return super.onKeyUp(keyCode, event);
     }
 
     /**
@@ -75,9 +123,10 @@ public class MainActivity extends Activity implements
      */
     @Override
     protected void onStop() {
-        if (mGoogleApiClient != null) {
-            mGoogleApiClient.disconnect();
+        if (googleApiClient != null) {
+            googleApiClient.disconnect();
         }
+        handler.removeCallbacks(updateCounterRunnable);
         super.onStop();
     }
 
@@ -87,7 +136,7 @@ public class MainActivity extends Activity implements
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        outState.putBoolean(KEY_IN_RESOLUTION, mIsInResolution);
+        outState.putBoolean(KEY_IN_RESOLUTION, isInResolution);
     }
 
     /**
@@ -104,14 +153,14 @@ public class MainActivity extends Activity implements
     }
 
     private void retryConnecting() {
-        mIsInResolution = false;
-        if (!mGoogleApiClient.isConnecting()) {
-            mGoogleApiClient.connect();
+        isInResolution = false;
+        if (!googleApiClient.isConnecting()) {
+            googleApiClient.connect();
         }
     }
 
     /**
-     * Called when {@code mGoogleApiClient} is connected.
+     * Called when {@code googleApiClient} is connected.
      */
     @Override
     public void onConnected(Bundle connectionHint) {
@@ -120,7 +169,7 @@ public class MainActivity extends Activity implements
     }
 
     /**
-     * Called when {@code mGoogleApiClient} connection is suspended.
+     * Called when {@code googleApiClient} connection is suspended.
      */
     @Override
     public void onConnectionSuspended(int cause) {
@@ -129,7 +178,7 @@ public class MainActivity extends Activity implements
     }
 
     /**
-     * Called when {@code mGoogleApiClient} is trying to connect but failed.
+     * Called when {@code googleApiClient} is trying to connect but failed.
      * Handle {@code result.getResolution()} if there is a resolution
      * available.
      */
@@ -150,15 +199,29 @@ public class MainActivity extends Activity implements
         // If there is an existing resolution error being displayed or a resolution
         // activity has started before, do nothing and wait for resolution
         // progress to be completed.
-        if (mIsInResolution) {
+        if (isInResolution) {
             return;
         }
-        mIsInResolution = true;
+        isInResolution = true;
         try {
             result.startResolutionForResult(this, REQUEST_CODE_RESOLUTION);
         } catch (SendIntentException e) {
             Log.e(TAG, "Exception while starting resolution activity", e);
             retryConnecting();
         }
+    }
+
+    private void updateMinCounter() {
+        if (timeOfLastCheckInMs == -1) {
+            minCounter.setText("Вернитесь в Омск, чтобы продолжить игру!");
+        } else {
+            long diff = getCurrentTimeMs() - timeOfLastCheckInMs;
+            double diffInMins = diff / (1000.0 * 60);
+            minCounter.setText(String.format("Вы в Омске, уже %.2f минут", diffInMins));
+        }
+    }
+
+    private long getCurrentTimeMs() {
+        return System.currentTimeMillis();
     }
 }
